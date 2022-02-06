@@ -28,13 +28,72 @@ from pytorch3d.loss import (
 )
 
 
+class FrameReader(object):
+
+    def __init__(self,
+                 image_paths=None,
+                 image_array=None,
+                 read_batch=False,
+                 kp2d=None,
+                 device='cpu'):
+        self.read_batch = read_batch
+        self.device = device
+        if read_batch:
+            self.image_paths = np.array(image_paths) if isinstance(
+                image_paths, (tuple, list)) else image_paths
+            self.len = len(self.image_paths)
+
+        else:
+            if image_array is None:
+                image_array = []
+                for path in image_paths:
+                    im = cv2.imread(path)
+                    im = cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
+                    im = im[None]
+                    image_array.append(im)
+                image_array = np.concatenate(image_array)
+
+            if isinstance(device, str):
+                device = torch.device(device)
+            image_tensor = torch.Tensor(image_array).to(self.device)
+            self.len = image_array.shape[0]
+            self.image_tensor = image_tensor
+        self.kp2d = torch.Tensor(kp2d).to(device) if kp2d is not None else None
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, index):
+
+        if isinstance(index, int):
+            index = [index]
+        if self.read_batch:
+            paths = self.image_paths[index]
+            image_array = []
+            for path in paths:
+                im = cv2.imread(path)
+                im = cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
+                im = im[None]
+                image_array.append(im)
+            image_array = np.concatenate(image_array)
+            img_data = torch.Tensor(image_array).to(self.device)
+        else:
+            img_data = self.image_tensor[index]
+        if self.kp2d is not None:
+            kp2d = self.kp2d[index]
+        else:
+            kp2d = None
+
+        return img_data, kp2d
+
+
 @REGISTRANTS.register_module(name=['Flow2Avatar', 'flow2avatar'])
 class Flow2Avatar(SMPLify):
 
     def __init__(
             self,
             body_model: Union[dict, torch.nn.Module],
-            img_res: Union[Tuple[int], int] = 1000,
+            img_res: Tuple = (1000, 1000),
             texture_res: Union[Tuple[int], int] = 1024,
             uv_res: Union[Tuple[int], int] = 512,
             select_frame: dict = None,
@@ -48,6 +107,7 @@ class Flow2Avatar(SMPLify):
             renderer_flow: dict = None,
             renderer_uv: dict = None,
             verbose: bool = False,
+            read_batch: bool=False,
             device=torch.device(
                 'cuda' if torch.cuda.is_available() else 'cpu'),
     ):
@@ -60,9 +120,12 @@ class Flow2Avatar(SMPLify):
         else:
             raise TypeError(f'body_model should be either dict or '
                             f'torch.nn.Module, but got {type(body_model)}')
-        self.img_res = img_res
+        self.img_res = tuple(img_res) if not isinstance(img_res,
+                                                        (int, float)) else (
+                                                            img_res, img_res)
         self.texture_res = texture_res
         self.uv_res = uv_res
+        self.read_batch = read_batch
 
         self.select_frame = select_frame
         self.optimizer = optimizer
@@ -118,10 +181,14 @@ class Flow2Avatar(SMPLify):
         return_texture: bool = True,
         return_background: bool = True,
     ) -> dict:
-        image_reader = _CavasProducer(
-            frame_list=image_paths,
+
+        image_reader = FrameReader(
+            image_paths=image_paths,
+            read_batch=self.read_batch,
             kp2d=keypoints2d,
-            resolution=(self.img_res, self.img_res))
+            device=self.device)
+
+        cameras = cameras.to(self.device)
         num_frames = max(len(image_reader), 1)
         self.keypoints2d_conf = keypoints2d_conf
 
@@ -136,6 +203,9 @@ class Flow2Avatar(SMPLify):
         if init_betas is None and self.use_one_betas_per_video:
             betas = torch.zeros(1, self.body_model.betas.shape[-1]).to(
                 self.device)
+        elif init_betas is not None and self.use_one_betas_per_video:
+            betas = init_betas.mean(dim=0).view(1, 10).to(
+                self.device)
         else:
             betas = self._match_init_batch_size(init_betas,
                                                 self.body_model.betas,
@@ -143,7 +213,7 @@ class Flow2Avatar(SMPLify):
 
         displacement = self.body_model.displacement if init_displacement is None else init_displacement
 
-        background = torch.zeros(self.img_res, self.img_res, 3).to(
+        background = torch.zeros(self.img_res[0], self.img_res[1], 3).to(
             self.device) if init_background is None else init_background
 
         texture_image = self.body_model.texture_image if init_texture_image is None else init_texture_image
@@ -247,11 +317,11 @@ class Flow2Avatar(SMPLify):
         optimizer = build_optimizer(parameters, self.optimizer)
 
         ############################################
-        from pytorch3d.renderer import look_at_view_transform
-        im = cv2.imread('/mnt/lustre/wangwenjia/programs/room.jpeg')
-        im = cv2.resize(im, (self.img_res, self.img_res),
-                        cv2.INTER_CUBIC).astype(np.float32) / 255.0
-        B_syn = torch.Tensor(im).to(self.device)[None]
+        # from pytorch3d.renderer import look_at_view_transform
+        # im = cv2.imread('/mnt/lustre/wangwenjia/programs/room.jpeg')
+        # im = cv2.resize(im, (self.img_res, self.img_res),
+        #                 cv2.INTER_CUBIC).astype(np.float32) / 255.0
+        # B_syn = torch.Tensor(im).to(self.device)[None]
         lights = PointLights(
             device=self.device,
             location=[[0.0, 0.0, -3.0]],
@@ -259,8 +329,8 @@ class Flow2Avatar(SMPLify):
             diffuse_color=[[0, 0, 0]],
             specular_color=[[0, 0, 0]],
         )
-        mesh_scan = load_plys_as_meshes(['/mnt/lustre/wangwenjia/mesh/ai.ply'],
-                                        device=self.device)
+        # mesh_scan = load_plys_as_meshes(['/mnt/lustre/wangwenjia/mesh/ai.ply'],
+        #                                 device=self.device)
 
         ############################################
 
@@ -269,91 +339,90 @@ class Flow2Avatar(SMPLify):
             if self.use_loss(losses_config, k):
                 losses_plot[k] = {"values": []}
         for iter_idx in trange(num_iter):
-            # indexes_source, indexes_target = self._select_frames_index(
-            #     batch_size=batch_size,
-            #     num_frames=len(image_reader),
-            #     **self.select_frame)
+            indexes_source, indexes_target = self._select_frames_index(
+                batch_size=batch_size,
+                num_frames=len(image_reader),
+                **self.select_frame)
             if ((iter_idx % plot_period) == 0) or (iter_idx == num_iter - 1):
                 plot_flag = f'stage_{stage_idx}_iter_{iter_idx}'
             else:
                 plot_flag = None
 
             ############################################
-            dist1 = 1.2 + np.random.uniform(
-                low=-0.3, high=0.3, size=(batch_size, 1))
-            elev1 = np.random.uniform(low=160, high=200, size=(batch_size, 1))
-            azim1 = np.random.uniform(low=0, high=360, size=(batch_size, 1))
-            fov1 = 90
+            # dist1 = 1.2 + np.random.uniform(
+            #     low=-0.3, high=0.3, size=(batch_size, 1))
+            # elev1 = np.random.uniform(low=160, high=200, size=(batch_size, 1))
+            # azim1 = np.random.uniform(low=0, high=360, size=(batch_size, 1))
+            # fov1 = 90
 
-            R1, T1 = look_at_view_transform(dist=dist1, elev=elev1, azim=azim1)
+            # R1, T1 = look_at_view_transform(dist=dist1, elev=elev1, azim=azim1)
 
-            dist2 = dist1 + np.random.uniform(
-                low=-0.4, high=0.4, size=(batch_size, 1))
-            elev2 = elev1 + np.random.uniform(
-                low=-5, high=5, size=(batch_size, 1))
-            azim2 = azim1 + np.random.uniform(
-                low=-5, high=5, size=(batch_size, 1))
+            # dist2 = dist1 + np.random.uniform(
+            #     low=-0.4, high=0.4, size=(batch_size, 1))
+            # elev2 = elev1 + np.random.uniform(
+            #     low=-5, high=5, size=(batch_size, 1))
+            # azim2 = azim1 + np.random.uniform(
+            #     low=-5, high=5, size=(batch_size, 1))
 
-            R2, T2 = look_at_view_transform(dist=dist2, elev=elev2, azim=azim2)
+            # R2, T2 = look_at_view_transform(dist=dist2, elev=elev2, azim=azim2)
 
-            cameras_source = build_cameras(
-                dict(
-                    type='fovperspective',
-                    device=self.device,
-                    R=R1,
-                    T=T1,
-                    fov=fov1))
-            cameras_target = build_cameras(
-                dict(
-                    type='fovperspective',
-                    device=self.device,
-                    R=R2,
-                    T=T2,
-                    fov=fov1))
+            # cameras_source = build_cameras(
+            #     dict(
+            #         type='fovperspective',
+            #         device=self.device,
+            #         R=R1,
+            #         T=T1,
+            #         fov=fov1))
+            # cameras_target = build_cameras(
+            #     dict(
+            #         type='fovperspective',
+            #         device=self.device,
+            #         R=R2,
+            #         T=T2,
+            #         fov=fov1))
 
-            images_source = self.renderer_rgb(
-                mesh_scan.extend(batch_size),
-                cameras=cameras_source,
-                lights=lights)
-            masks = (images_source[..., 3:] > 0) * 1.0
-            images_source = masks * images_source[..., :3] + (1 -
-                                                              masks) * B_syn
+            # images_source = self.renderer_rgb(
+            #     mesh_scan.extend(batch_size),
+            #     cameras=cameras_source,
+            #     lights=lights)
+            # masks = (images_source[..., 3:] > 0) * 1.0
+            # images_source = masks * images_source[..., :3] + (1 -
+            #                                                   masks) * B_syn
 
-            images_target = self.renderer_rgb(
-                mesh_scan.extend(batch_size),
-                cameras=cameras_target,
-                lights=lights)
-            masks = (images_target[..., 3:] > 0) * 1.0
-            images_target = masks * images_target[..., :3] + (1 -
-                                                              masks) * B_syn
+            # images_target = self.renderer_rgb(
+            #     mesh_scan.extend(batch_size),
+            #     cameras=cameras_target,
+            #     lights=lights)
+            # masks = (images_target[..., 3:] > 0) * 1.0
+            # images_target = masks * images_target[..., :3] + (1 -
+            #                                                   masks) * B_syn
 
-            global_orient_source = global_orient.repeat(batch_size, 1)
-            body_pose_source = body_pose.repeat(batch_size, 1)
-            transl_source = transl.repeat(batch_size, 1)
-            global_orient_target = global_orient.repeat(batch_size, 1)
-            body_pose_target = body_pose.repeat(batch_size, 1)
-            transl_target = transl.repeat(batch_size, 1)
+            # global_orient_source = global_orient.repeat(batch_size, 1)
+            # body_pose_source = body_pose.repeat(batch_size, 1)
+            # transl_source = transl.repeat(batch_size, 1)
+            # global_orient_target = global_orient.repeat(batch_size, 1)
+            # body_pose_target = body_pose.repeat(batch_size, 1)
+            # transl_target = transl.repeat(batch_size, 1)
 
             ############################################
 
             def closure():
                 optimizer.zero_grad()
-                betas_video = self._expand_betas(body_pose.shape[0], betas)
+                # betas_video = self._expand_betas(body_pose.shape[0], betas)
+                betas_video = betas
+                images_source, keypoints2d_source = image_reader[
+                    indexes_source]
+                images_target, keypoints2d_target = image_reader[
+                    indexes_target]
+                cameras_source = cameras[indexes_source]
+                cameras_target = cameras[indexes_target]
 
-                # images_source, keypoints2d_source = image_reader[
-                #     indexes_source]
-                # images_target, keypoints2d_target = image_reader[
-                #     indexes_target]
-                # cameras_source = cameras[indexes_source]
-                # cameras_target = cameras[indexes_target]
-
-                # global_orient_source=global_orient[indexes_source]
-                # body_pose_source=body_pose[indexes_source]
-                # transl_source=transl[indexes_source]
-                # global_orient_target=global_orient[indexes_target]
-                # body_pose_target=body_pose[indexes_target]
-                # transl_target=transl[indexes_target]
-
+                global_orient_source = global_orient[indexes_source]
+                body_pose_source = body_pose[indexes_source]
+                transl_source = transl[indexes_source]
+                global_orient_target = global_orient[indexes_target]
+                body_pose_target = body_pose[indexes_target]
+                transl_target = transl[indexes_target]
                 loss_dict = self.evaluate(
                     betas=betas_video,
                     global_orient_source=global_orient_source,
@@ -366,9 +435,9 @@ class Flow2Avatar(SMPLify):
                     images_target=images_target,
                     cameras_source=cameras_source,
                     cameras_target=cameras_target,
-                    # keypoints2d_source=keypoints2d_source,
+                    keypoints2d_source=keypoints2d_source,
                     keypoints2d_source_conf=self.keypoints2d_conf,
-                    # keypoints2d_target=keypoints2d_target,
+                    keypoints2d_target=keypoints2d_target,
                     keypoints2d_target_conf=self.keypoints2d_conf,
                     displacement=displacement,
                     texture_image=texture_image,
@@ -679,19 +748,17 @@ class Flow2Avatar(SMPLify):
 
         if use_loss(key="kp2d_mse_loss"):
             kp2d_target_pred = cameras_target.transform_points_screen(
-                model_joints_target,
-                image_size=(self.img_res, self.img_res))[..., :2]
+                model_joints_target, image_size=self.img_res)[..., :2]
 
             loss_kp2d = (((keypoints2d_target - kp2d_target_pred)**2) *
                          keypoints2d_target_conf *
-                         model_joints_mask_target).mean() / self.img_res
+                         model_joints_mask_target).mean() / self.img_res[0]
 
             kp2d_source_pred = cameras_source.transform_points_screen(
-                model_joints_source,
-                image_size=(self.img_res, self.img_res))[..., :2]
+                model_joints_source, image_size=self.img_res)[..., :2]
             loss_kp2d += (((keypoints2d_source - kp2d_source_pred)**2) *
                           keypoints2d_source_conf *
-                          model_joints_mask_source).mean() / self.img_res
+                          model_joints_mask_source).mean() / self.img_res[0]
 
             losses["kp2d_mse_loss"] = loss_kp2d / batch_size
 

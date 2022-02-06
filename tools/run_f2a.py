@@ -3,6 +3,7 @@ import pickle
 
 import mmcv
 from mmhuman3d.core.cameras.builder import build_cameras
+from mmhuman3d.core.conventions.cameras import convert_world_view
 from mmhuman3d.utils.mesh_utils import save_meshes_as_objs
 import numpy as np
 import torch
@@ -102,33 +103,11 @@ def main():
         body_model=body_model_config,
         use_one_betas_per_video=args.use_one_betas_per_video)
 
-    if args.image_folder is not None:
-        image_paths = glob.glob(osj(args.image_folder, '*.png'))
-    else:
-        image_paths = None
-
-    cameras = None
-    if args.camera_path is not None:
-        with open(args.camera_path, 'rb') as f:
-            cameras_config = pickle.load(f)
-        cameras = build_cameras(cameras_config).to(device)
-
-    data = dict(
-        image_paths=image_paths,
-        cameras=cameras,
-        return_texture=True,
-        return_mesh=True)
-
-    d = np.load('/mnt/lustre/wangwenjia/mesh/m2m_smpl.npz')
-    init_global_orient = torch.Tensor(d['global_orient'])[0:1].to(device)
-    init_transl = torch.Tensor(d['transl'])[0:1].to(device)
-    init_body_pose = torch.Tensor(d['body_pose'])[0:1].to(device)
-    init_betas = torch.Tensor(d['betas'])[0:1].to(device)
-    data.update(
-        init_global_orient=init_global_orient,
-        init_transl=init_transl,
-        init_body_pose=init_body_pose,
-        init_betas=init_betas)
+    # cameras = None
+    # if args.camera_path is not None:
+    #     with open(args.camera_path, 'rb') as f:
+    #         cameras_config = pickle.load(f)
+    #     cameras = build_cameras(cameras_config).to(device)
 
     if args.keypoint is not None:
         with open(args.keypoint, 'rb') as f:
@@ -155,22 +134,60 @@ def main():
                 dict(keypoints3d=keypoints, keypoints3d_conf=keypoints_conf))
 
     flow2avatar = build_registrant(dict(flow2avatar_config))
+    d = np.load(
+        '/mnt/lustre/wangwenjia/datasets/h36m/S1_Eating_2.60457274/S1_Eating_2.60457274.npz'
+    )
+
+    pose = d['pose']
+    image_names = d['imgname']
+    image_paths = [
+        osj('/mnt/lustre/wangwenjia/datasets/h36m/S1_Eating_2.60457274/images',
+            im_name) for im_name in image_names
+    ]
+    R = torch.Tensor(d['R'])
+    T = torch.Tensor(d['T'])
+    K = torch.Tensor(d['K'])
+    R, T = convert_world_view(R, T)
+    cameras = build_cameras(
+        dict(
+            type='perspective',
+            in_ndc=False,
+            convention='opencv',
+            K=K,
+            R=R,
+            T=T,
+            resolution=(1002, 1000)))
+
+    pose_dict = flow2avatar.body_model.tensor2dict(
+        torch.Tensor(pose), betas=torch.Tensor(d['shape']))
+    init_global_orient = pose_dict['global_orient'].to(device)
+    init_transl = pose_dict['transl'].to(device) if pose_dict['transl'] is not None else None
+    init_body_pose = pose_dict['body_pose'].to(device)
+    init_betas = pose_dict['betas'].to(device)
+
+    data = dict(
+        image_paths=image_paths,
+        cameras=cameras,
+        return_texture=True,
+        return_mesh=True,
+        init_global_orient=init_global_orient,
+        init_transl=init_transl,
+        init_body_pose=init_body_pose,
+        init_betas=init_betas)
 
     flow2avatar_output = flow2avatar(**data)
 
     avatar = flow2avatar_output.pop('meshes')
 
-    pose = torch.zeros(1, 72).to(device)
-    pose = flow2avatar.body_model.tensor2dict(pose)
-
-    flow2avatar_output = flow2avatar.body_model(
+    pose_dict = flow2avatar.body_model.tensor2dict(torch.zeros(1, 72))
+    Tpose_output = flow2avatar.body_model(
         displacement=flow2avatar_output['displacement'],
         texture_image=flow2avatar_output['texture_image'],
         return_mesh=True,
         return_texture=True,
-        **pose)
+        **pose_dict)
 
-    T_avatar = flow2avatar_output['meshes']
+    T_avatar = Tpose_output['meshes']
     save_meshes_as_objs(T_avatar[0], [osj(args.exp_dir, 'T_pose.obj')])
     # get smpl parameters directly from smplify output
     with open(osj(args.exp_dir, 'smpld.pkl'), 'wb') as f:

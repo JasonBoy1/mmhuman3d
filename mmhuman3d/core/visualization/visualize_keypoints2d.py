@@ -318,54 +318,55 @@ class _CavasProducer:
         if self.image_array is None:
             self.len = len(self.frame_list)
         else:
-            self.len = self.image_array.shape[0]
+            self.len = int(self.image_array.shape[0])
 
     def __getitem__(self, frame_index):
         """Get frame data from frame_list of image_array."""
         # frame file exists, resolution not set
-        if frame_index < self.len and self.resolution is None:
-            if self.image_array is not None:
-                canvas = self.image_array[frame_index]
+        if isinstance(frame_index, int):
+            if frame_index < self.len and self.resolution is None:
+                if self.image_array is not None:
+                    canvas = self.image_array[frame_index]
+                else:
+                    canvas = cv2.imread(self.frame_list[frame_index])
+                if self.kp2d is None:
+                    kp2d_frame = None
+                else:
+                    kp2d_frame = self.kp2d[frame_index]
+            # no frame file, resolution has been set
+            elif frame_index >= self.len and self.resolution is not None:
+                canvas = np.ones((self.resolution[0], self.resolution[1], 3),
+                                dtype=np.uint8) * 255
+                if self.kp2d is None:
+                    kp2d_frame = None
+                else:
+                    kp2d_frame = self.kp2d[frame_index]
+            # frame file exists, resolution has been set
+            elif frame_index < self.len and self.resolution is not None:
+                if self.image_array is not None:
+                    canvas = self.image_array[frame_index]
+                else:
+                    canvas = cv2.imread(self.frame_list[frame_index])
+                w_scale = self.resolution[1] / canvas.shape[1]
+                h_scale = self.resolution[0] / canvas.shape[0]
+                canvas = cv2.resize(canvas,
+                                    (self.resolution[1], self.resolution[0]),
+                                    cv2.INTER_CUBIC)
+                if self.kp2d is None:
+                    kp2d_frame = None
+                else:
+                    kp2d_frame = np.array([[w_scale, h_scale]
+                                        ]) * self.kp2d[frame_index]
+            # no frame file, no resolution
             else:
-                canvas = cv2.imread(self.frame_list[frame_index])
-            if self.kp2d is None:
-                kp2d_frame = None
-            else:
-                kp2d_frame = self.kp2d[frame_index]
-        # no frame file, resolution has been set
-        elif frame_index >= self.len and self.resolution is not None:
-            canvas = np.ones((self.resolution[0], self.resolution[1], 3),
-                             dtype=np.uint8) * 255
-            if self.kp2d is None:
-                kp2d_frame = None
-            else:
-                kp2d_frame = self.kp2d[frame_index]
-        # frame file exists, resolution has been set
-        elif frame_index < self.len and self.resolution is not None:
-            if self.image_array is not None:
-                canvas = self.image_array[frame_index]
-            else:
-                canvas = cv2.imread(self.frame_list[frame_index])
-            w_scale = self.resolution[1] / canvas.shape[1]
-            h_scale = self.resolution[0] / canvas.shape[0]
-            canvas = cv2.resize(canvas,
-                                (self.resolution[1], self.resolution[0]),
-                                cv2.INTER_CUBIC)
-            if self.kp2d is None:
-                kp2d_frame = None
-            else:
-                kp2d_frame = np.array([[w_scale, h_scale]
-                                       ]) * self.kp2d[frame_index]
-        # no frame file, no resolution
-        else:
-            canvas = np.ones(
-                (self.auto_resolution[0], self.auto_resolution[1], 3),
-                dtype=np.uint8) * 255
-            if self.kp2d is None:
-                kp2d_frame = None
-            else:
-                kp2d_frame = self.kp2d[frame_index]
-            return canvas, kp2d_frame
+                canvas = np.ones(
+                    (self.auto_resolution[0], self.auto_resolution[1], 3),
+                    dtype=np.uint8) * 255
+                if self.kp2d is None:
+                    kp2d_frame = None
+                else:
+                    kp2d_frame = self.kp2d[frame_index]
+                return canvas, kp2d_frame
 
     def __len__(self):
         return self.len

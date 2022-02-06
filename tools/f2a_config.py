@@ -1,7 +1,8 @@
 type = 'flow2avatar'
-img_res = 1000
+img_res = (1002, 1000)
 texture_res = 1024
 uv_res = 512
+read_batch = False
 
 select_frame = dict(
     temporal_successive=True, interval_range=5, fix_interval=True)
