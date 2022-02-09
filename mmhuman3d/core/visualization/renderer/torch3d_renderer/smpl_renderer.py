@@ -37,6 +37,7 @@ class SMPLRenderer(MeshBaseRenderer):
                  return_tensor: bool = False,
                  alpha: float = 1.0,
                  model_type='smpl',
+                 read_img_format: str = None,
                  out_img_format: str = '%06d.png',
                  render_choice='mq',
                  projection: Literal['weakperspective', 'fovperspective',
@@ -54,6 +55,7 @@ class SMPLRenderer(MeshBaseRenderer):
         self.projection = projection
         self.resolution = resolution
         self.model_type = model_type
+        self.read_img_format = read_img_format
         self.in_ndc = in_ndc
         self.render_choice = render_choice
         self.output_path = output_path
@@ -205,7 +207,7 @@ class SMPLRenderer(MeshBaseRenderer):
             images = images_to_array(
                 self.frames_folder,
                 resolution=self.resolution,
-                img_format=self.img_format,
+                img_format=self.read_img_format,
                 start=indexes[0],
                 end=indexes[-1],
                 disable_log=True).astype(np.float64)

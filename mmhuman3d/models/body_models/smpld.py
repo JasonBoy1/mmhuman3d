@@ -24,6 +24,8 @@ class SMPLD(SMPL):
                  create_displacement: bool = True,
                  **kwargs) -> None:
         super().__init__(**kwargs)
+        if create_texture:
+            assert texture_res is not None or texture_image is not None
         if uv_param_path is not None:
             self.uv_param_path = uv_param_path
             check_input_path(
@@ -41,7 +43,6 @@ class SMPLD(SMPL):
             faces_uv = torch.LongTensor(param_dict['vt_faces'])
             self.register_buffer('verts_uv', verts_uv)
             self.register_buffer('faces_uv', faces_uv)
-            assert isinstance(texture_res, int)
         else:
             if create_texture is True:
                 warnings.warn(

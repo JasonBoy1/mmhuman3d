@@ -234,9 +234,8 @@ class NewAttributeCameras(cameras.CamerasBase):
             R=self.R.repeat(N, 1, 1),
             T=self.T.repeat(N, 1),
             image_size=self.get_image_size(),
-            _in_ndc=self.in_ndc(),
-            _is_perspective=self._is_perspective,
-            convention=self.convention,
+            in_ndc=self.in_ndc(),
+            convention='pytorch3d',
             device=self.device)
 
     def extend_(self, N):
@@ -760,6 +759,17 @@ class PerspectiveCameras(cameras.PerspectiveCameras, NewAttributeCameras):
             principal_point=principal_point,
             orthographic=False)
 
+    def get_ndc_camera_transform(self, **kwargs) -> Transform3d:
+        kwargs.pop('cameras', None)
+        return super().get_ndc_camera_transform(**kwargs)
+
+    def transform_points_screen(self,
+                                points,
+                                eps: Optional[float] = None,
+                                **kwargs) -> torch.Tensor:
+        kwargs.pop('cameras', None)
+        return super().transform_points_screen(points, eps, **kwargs)
+
 
 @CAMERAS.register_module(
     name=('FoVPerspectiveCameras', 'FoVPerspective', 'fovperspective'))
@@ -826,6 +836,17 @@ class FoVPerspectiveCameras(cameras.FoVPerspectiveCameras,
             NewAttributeCameras: sliced cameras.
         """
         return super(cameras.FoVPerspectiveCameras, self).__getitem__(index)
+
+    def get_ndc_camera_transform(self, **kwargs) -> Transform3d:
+        kwargs.pop('cameras', None)
+        return super().get_ndc_camera_transform(**kwargs)
+
+    def transform_points_screen(self,
+                                points,
+                                eps: Optional[float] = None,
+                                **kwargs) -> torch.Tensor:
+        kwargs.pop('cameras', None)
+        return super().transform_points_screen(points, eps, **kwargs)
 
     @classmethod
     def get_default_projection_matrix(cls, **args) -> torch.Tensor:
@@ -945,6 +966,17 @@ class OrthographicCameras(cameras.OrthographicCameras, NewAttributeCameras):
                 raise ValueError('Image_size provided has invalid values')
         else:
             self.image_size = None
+
+    def get_ndc_camera_transform(self, **kwargs) -> Transform3d:
+        kwargs.pop('cameras', None)
+        return super().get_ndc_camera_transform(**kwargs)
+
+    def transform_points_screen(self,
+                                points,
+                                eps: Optional[float] = None,
+                                **kwargs) -> torch.Tensor:
+        kwargs.pop('cameras', None)
+        return super().transform_points_screen(points, eps, **kwargs)
 
     def __getitem__(self, index: Union[slice, int, torch.Tensor, List, Tuple]):
         """Slice the cameras by batch dim.
@@ -1143,6 +1175,17 @@ class FoVOrthographicCameras(cameras.FoVOrthographicCameras,
     def to_screen(self, **kwargs):
         """Not implemented."""
         raise NotImplementedError()
+
+    def get_ndc_camera_transform(self, **kwargs) -> Transform3d:
+        kwargs.pop('cameras', None)
+        return super().get_ndc_camera_transform(**kwargs)
+
+    def transform_points_screen(self,
+                                points,
+                                eps: Optional[float] = None,
+                                **kwargs) -> torch.Tensor:
+        kwargs.pop('cameras', None)
+        return super().transform_points_screen(points, eps, **kwargs)
 
 
 def concat_cameras(

@@ -138,7 +138,10 @@ class MeshBaseRenderer(nn.Module):
         if isinstance(rasterizer, nn.Module):
             if self.resolution is not None:
                 rasterizer.raster_settings.image_size = self.resolution
+            else:
+                self.resolution = rasterizer.raster_settings.image_size
             self.rasterizer = rasterizer
+
         elif isinstance(rasterizer, dict):
             if self.resolution is not None:
                 rasterizer['image_size'] = self.resolution

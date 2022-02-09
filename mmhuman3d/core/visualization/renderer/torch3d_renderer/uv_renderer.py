@@ -26,7 +26,7 @@ class UVRenderer(nn.Module):
 
     def __init__(
         self,
-        resolution: Tuple[int] = None,
+        resolution: Union[int, Tuple[int]] = None,
         model_type: Optional[str] = 'smpl',
         uv_param_path: Optional[str] = None,
         obj_path: Optional[str] = None,
@@ -36,8 +36,8 @@ class UVRenderer(nn.Module):
         num_verts = {'smpl': 6890, 'smplx': 10475}
         self.NUM_VERTS = num_verts[model_type]
         self.device = device
-        self.resolution = (resolution, resolution) if isinstance(
-            resolution, int) else resolution
+        self.resolution = (int(resolution), int(resolution)) if isinstance(
+            resolution, (int, float)) else resolution
         self.uv_param_path = uv_param_path
         self.obj_path = obj_path
         if uv_param_path is not None:
@@ -222,6 +222,8 @@ class UVRenderer(nn.Module):
         if verts_attr.ndim == 2:
             verts_attr = verts_attr[None]
         if resolution is not None and resolution != self.resolution:
+            if isinstance(resolution, (int, float)):
+                resolution = (int(resolution), int(resolution))
             self.resolution = resolution
             self.update_fragments()
             self.update_face_uv_pixel()
